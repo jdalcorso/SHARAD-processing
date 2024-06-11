@@ -1,0 +1,4 @@
+*.pbs.o
+*.dat
+*.npy
+*.png
