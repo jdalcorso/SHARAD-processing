@@ -1,0 +1,6 @@
+*.pbs.o
+*.dat
+*.npy
+*.png
+*.txt
+.DS_Store
