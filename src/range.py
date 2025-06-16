@@ -2,6 +2,7 @@ import argparse
 import time
 import numpy as np
 import matplotlib.pyplot as plt
+from numpy.fft import fft, ifft, fftshift, fftfreq
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Range compression of SHARAD raw data', add_help = False)
@@ -32,15 +33,22 @@ def main(args):
     p = args.presum
     b = args.bits_per_sample
     R = R * np.exp2(np.round(np.log2(p)) - b + 8) / p
-    R = R - R.mean()
 
     # Topographic shift
     topo = np.load(args.topo_path) * 1000 # in meters
     topo = topo - topo.min()
-    dz = c / np.sqrt(args.dielectric_eps) * si
-    pixel_topo = topo/dz # Topographic shift in pixels
+    v = c / np.sqrt(args.dielectric_eps)  # speed in the medium
+    delta_t = 2 * topo / v                # two-way time delay (in seconds)
+    pixel_topo = delta_t / si  # shift in samples
+    N = R.shape[0]
+    freqs = fftfreq(N, d=si)  # si is the sampling interval in seconds
     for i in range(R.shape[1]):
-        R[:,i] = np.roll(R[:,i], shift = -int(np.round(pixel_topo[i])))
+        shift = pixel_topo[i]  # This can be fractional
+        signal = R[:, i]
+        spectrum = fft(signal)
+        shift_phase = np.exp(2j * np.pi * freqs * shift * si)  # si scales from samples to seconds
+        shifted_signal = ifft(spectrum * shift_phase)
+        R[:, i] = np.real(shifted_signal)
 
     # Loading chirp file from SHARAD calibration folder (Mars ODE)
     chirpf = args.chirp_path
@@ -59,19 +67,19 @@ def main(args):
     R = np.concatenate([to_pad, R, to_pad], axis = 0)
     new_n_samples = R.shape[0]
     T = si * new_n_samples
-    t_signal = np.linspace(0,T - 1/sf, new_n_samples)
+    t_signal = np.linspace(0,T - si, new_n_samples)
     
     # Range compression
     R_complex = R * np.exp(2 * np.pi * (sf-cf)/1e6 *1j * t_signal)[:,np.newaxis]    # Complex demodulation
-    signal_fft = np.fft.fft(R_complex, axis = 0)                                # Signal FFT
+    signal_fft = fftshift(fft(R_complex, axis = 0))                                       # Signal FFT
     signal_fft = signal_fft[1024:3072,:]                                        # Keep only signal central frequencies
-    chirp_conj = np.fft.fftshift(np.conj(chirp))                                # Chirp spectrum conjugate
+    chirp_conj = fftshift(np.conj(chirp))                              # Chirp spectrum conjugate
     RC_fft = chirp_conj[:,np.newaxis] * signal_fft                # Multiplication between Signal FFT and Chirp spectrum conjugate
 
     # Hann windowing
     hann_window = np.hanning(RC_fft.shape[0])[:,np.newaxis]
     RC_windowed = RC_fft * np.fft.fftshift(hann_window)
-    RC = np.fft.ifft(RC_windowed, axis = 0)
+    RC = fftshift(ifft(RC_windowed, axis = 0))
 
     # Save
     np.save(args.output_path, RC)
